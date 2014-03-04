@@ -5,6 +5,8 @@
 #include <cstdio>
 
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 using namespace std;
 
@@ -91,6 +93,10 @@ int main(int argc, char *argv[])
     debug_output(string(engine1) + " vs " + engine2 + " (#T=" + argv[3] + ")");
 
     match(engine1, engine2, 0);
+
+    int status;
+    if (wait(&status) == -1)
+        debug_output("Wait error");
 
     return 0;
 }
