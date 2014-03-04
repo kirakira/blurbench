@@ -8,12 +8,7 @@
 
 using namespace std;
 
-void debug_output(const string &s)
-{
-    debug_output(s.c_str());
-}
-
-void debug_output(const char *message)
+void debug_output(const string &message)
 {
     char time_string[256];
     time_t t = time(NULL);
@@ -66,8 +61,6 @@ bool run(const char *engine, int *read_fd, int *write_fd, int *pid)
     *pid = cpid;
     *read_fd = piperead[0];
     *write_fd = pipewrite[1];
-
-    debug_output(string("Engine ") + engine + " loaded successfully");
 
     return true;
 }
