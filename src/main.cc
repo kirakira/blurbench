@@ -19,7 +19,14 @@ void debug_output(const string &message)
     cout << "[" << time_string << "] " << message << endl;
 }
 
-bool run(const char *engine, int *read_fd, int *write_fd, int *pid)
+typedef struct sEngine
+{
+    int id;
+    int read_fd, write_fd;
+    int pid;
+} Engine;
+
+bool run(const char *engine, Engine *info)
 {
     int piperead[2], pipewrite[2];
     if (pipe(piperead) == -1)
@@ -54,27 +61,18 @@ bool run(const char *engine, int *read_fd, int *write_fd, int *pid)
             return false;
         if (dup2(1, piperead[1]) == -1)
             return false;
-        if (execl(engine, NULL, NULL) == -1)
+        if (execl(engine, engine, NULL) == -1)
             return false;
     }
 
     close(piperead[1]);
     close(pipewrite[0]);
-    *pid = cpid;
-    *read_fd = piperead[0];
-    *write_fd = pipewrite[1];
+
+    info->read_fd = piperead[0];
+    info->write_fd = pipewrite[1];
+    info->pid = cpid;
 
     return true;
-}
-
-void match(const char *engine1, const char *engine2, int first)
-{
-    int fd1[2], fd2[2], pid1, pid2;
-    if (!run(engine1, fd1, fd1 + 1, &pid1))
-    {
-        debug_output(string("Failed to run ") + engine1);
-        return;
-    }
 }
 
 int main(int argc, char *argv[])
@@ -85,18 +83,28 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char *engine1 = argv[1], *engine2 = argv[1];
+    char *engine[2] = {argv[1], argv[1]};
 
     int threads_count = atoi(argv[3]);
 
     cout << "===============================" << endl;
-    debug_output(string(engine1) + " vs " + engine2 + " (#T=" + argv[3] + ")");
+    debug_output(string(engine[0]) + " vs " + engine[1] + " (#T=" + argv[3] + ")");
 
-    match(engine1, engine2, 0);
+    Engine *info = new Engine[threads_count * 2];
+    for (int i = 0; i < 2 * threads_count; ++i)
+    {
+        info->id = (i % 2);
+        if (!run(engine[info->id], &info[i]))
+        {
+            debug_output(string("Failed to run ") + engine[info->id]);
+            exit(1);
+        }
+    }
 
-    int status;
-    if (wait(&status) == -1)
-        debug_output("Wait error");
+    for (int i = 0; i < threads_count; ++i)
+        waitpid(info->pid, NULL, 0);
+
+    delete []info;
 
     return 0;
 }
