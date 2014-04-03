@@ -1,11 +1,14 @@
 #include <iostream>
+#include <sstream>
 #include <ctime>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
 #include <string>
 
+#include <errno.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/select.h>
@@ -47,7 +50,7 @@ struct Game
 bool run(const char *engine, Engine *info)
 {
     int piperead[2], pipewrite[2];
-    if (pipe(piperead) == -1)
+    if (pipe2(piperead, O_NONBLOCK) == -1)
     {
         debug_output("Create pipe failed 1");
         return false;
@@ -93,21 +96,65 @@ bool run(const char *engine, Engine *info)
     info->write_fd = pipewrite[1];
     info->pid = cpid;
 
+    write(info->write_fd, XBOARD_STRING, sizeof(XBOARD_STRING));
+
     return true;
+}
+
+void handle_command(Engine *e, string command)
+{
+    debug_output(command);
+}
+
+std::vector<std::string> &split(const std::string &s, char delim, std::vector<std::string> &elems)
+{
+    std::stringstream ss(s);
+    std::string item;
+    while (std::getline(ss, item, delim)) {
+        elems.push_back(item);
+    }
+    return elems;
+}
+
+
+std::vector<std::string> split(const std::string &s, char delim) {
+    std::vector<std::string> elems;
+    split(s, delim, elems);
+    return elems;
 }
 
 bool handle_read(Engine *e)
 {
     char c[10] = {0};
     string s;
-    int ret;
-    while ((ret = read(e->read_fd, c, 1)) > 0)
+    bool closed = false;
+    while (true)
     {
-        s += c[0];
+        int ret = read(e->read_fd, c, 5);
+        if (ret == O_NONBLOCK)
+            break;
+        if (ret == 0)
+        {
+            closed = true;
+            break;
+        }
+        else if (ret == -1)
+        {
+            if (errno != EAGAIN)
+                closed = true;
+            break;
+        }
+
+        s += c;
         memset(c, 0, sizeof(c));
     }
-    cout << ret << endl;
-    debug_output(s);
+
+    vector<string> commands = split(s, '\n');
+    for (size_t i = 0; i < commands.size(); ++i)
+        handle_command(e, commands[i]);
+
+    if (closed)
+        return true;
 
     return false;
 }
@@ -126,10 +173,6 @@ bool io(vector<Engine *> engines, fd_set *fs_read)
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
     int ret = select(len + 1, fs_read, NULL, NULL, &timeout);
-
-    for (int i = 0; i <= len; ++i)
-        if (FD_ISSET(i, fs_read))
-            cout << "set is on " << i << endl;
 
     if (ret == -1)
         return false;
@@ -176,7 +219,6 @@ int main(int argc, char *argv[])
             }
             engines.push_back(e);
 
-            write(e->write_fd, XBOARD_STRING, sizeof(XBOARD_STRING));
         }
 
         games.push_back(game);
