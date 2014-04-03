@@ -17,7 +17,9 @@
 
 using namespace std;
 
-const char XBOARD_STRING[] = {"xboard\nprotover 2\n"};
+const char XBOARD_STRING[] = {"xboard\nprotover 2\n"},
+      NEW_WHITE_GO[] = {"new\nwhite\ngo\n"},
+      NEW_BLACK[] = {"new\nblack\n"};
 
 void debug_output(const string &message)
 {
@@ -96,31 +98,43 @@ bool run(const char *engine, Engine *info)
     info->write_fd = pipewrite[1];
     info->pid = cpid;
 
-    write(info->write_fd, XBOARD_STRING, sizeof(XBOARD_STRING));
+    write(info->write_fd, XBOARD_STRING, strlen(XBOARD_STRING));
 
     return true;
-}
-
-void handle_command(Engine *e, string command)
-{
-    debug_output(command);
 }
 
 std::vector<std::string> &split(const std::string &s, char delim, std::vector<std::string> &elems)
 {
     std::stringstream ss(s);
     std::string item;
-    while (std::getline(ss, item, delim)) {
+    while (std::getline(ss, item, delim))
+    {
         elems.push_back(item);
     }
     return elems;
 }
 
 
-std::vector<std::string> split(const std::string &s, char delim) {
+std::vector<std::string> split(const std::string &s, char delim)
+{
     std::vector<std::string> elems;
     split(s, delim, elems);
     return elems;
+}
+
+void handle_command(Engine *e, string command)
+{
+    debug_output(command);
+
+    vector<string> tokens = split(command, ' ');
+    if (tokens.size() > 0 && tokens[0] == "feature")
+    {
+        if ((e->id == 0 && e->game->first_engine_first)
+            || (e->id == 1 && !e->game->first_engine_first))
+            write(e->write_fd, NEW_WHITE_GO, strlen(NEW_WHITE_GO));
+        else
+            write(e->write_fd, NEW_BLACK, strlen(NEW_BLACK));
+    }
 }
 
 bool handle_read(Engine *e)
