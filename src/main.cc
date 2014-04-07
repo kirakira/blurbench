@@ -18,8 +18,13 @@
 using namespace std;
 
 const char XBOARD_STRING[] = {"xboard\nprotover 2\n"},
-      NEW_WHITE_GO[] = {"new\nwhite\ngo\n"},
-      NEW_BLACK[] = {"new\nblack\n"};
+      NEW_GO[] = {"new\nwhite\ngo\n"},
+      NEW_FORCE[] = {"new\nwhite\nforce\n"},
+      FORCE[] = {"force\n"},
+      GO[] = {"go\n"},
+      QUIT[] = {"quit\n"};
+
+const int ENGINE0_WIN = 1, DRAW = 2, ENGINE1_WIN = 3;
 
 void debug_output(const string &message)
 {
@@ -108,9 +113,7 @@ std::vector<std::string> &split(const std::string &s, char delim, std::vector<st
     std::stringstream ss(s);
     std::string item;
     while (std::getline(ss, item, delim))
-    {
         elems.push_back(item);
-    }
     return elems;
 }
 
@@ -122,6 +125,14 @@ std::vector<std::string> split(const std::string &s, char delim)
     return elems;
 }
 
+void end_game(Game *game, int result)
+{
+    write(game->engines[0]->write_fd, QUIT, strlen(QUIT));
+    write(game->engines[1]->write_fd, QUIT, strlen(QUIT));
+    waitpid(game->engines[0]->pid, NULL, 0);
+    waitpid(game->engines[1]->pid, NULL, 0);
+}
+
 void handle_command(Engine *e, string command)
 {
     debug_output(command);
@@ -130,10 +141,30 @@ void handle_command(Engine *e, string command)
     if (tokens.size() > 0 && tokens[0] == "feature")
     {
         if ((e->id == 0 && e->game->first_engine_first)
-            || (e->id == 1 && !e->game->first_engine_first))
-            write(e->write_fd, NEW_WHITE_GO, strlen(NEW_WHITE_GO));
+                || (e->id == 1 && !e->game->first_engine_first))
+            write(e->write_fd, NEW_GO, strlen(NEW_GO));
         else
-            write(e->write_fd, NEW_BLACK, strlen(NEW_BLACK));
+            write(e->write_fd, NEW_FORCE, strlen(NEW_FORCE));
+    }
+    else if (tokens.size() >= 2 && tokens[0] == "move")
+    {
+        Engine *other = e->game->engines[1 - e->id];
+        write(other->write_fd, FORCE, strlen(FORCE));
+
+        string move = tokens[1] + "\n";
+        write(other->write_fd, move.c_str(), move.length());
+
+
+        write(other->write_fd, GO, strlen(GO));
+    }
+    else if (tokens.size() > 0 && (tokens[0] == "1-0" || tokens[0] == "0-1") && command.find("resigns") != string::npos)
+    {
+        int result;
+        if (e->id == 0)
+            result = ENGINE1_WIN;
+        else
+            result = ENGINE0_WIN;
+        end_game(e->game, result);
     }
 }
 
