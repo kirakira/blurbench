@@ -1,5 +1,7 @@
 #include <iostream>
 #include <sstream>
+#include <fstream>
+#include <algorithm>
 #include <ctime>
 #include <cstring>
 #include <cstdlib>
@@ -22,17 +24,32 @@ const char XBOARD_STRING[] = {"xboard\nprotover 2\n"},
       NEW_FORCE[] = {"new\nwhite\nforce\n"},
       FORCE[] = {"force\n"},
       GO[] = {"go\n"},
-      QUIT[] = {"quit\n"};
+      QUIT[] = {"quit\n"},
+      MAIN_LOG[] = {"main.log"};
 
-const int ENGINE0_WIN = 1, DRAW = 2, ENGINE1_WIN = 3;
+enum Result {
+    ENGINE0_FIRST_WIN = 0,
+    ENGINE0_SECOND_WIN,
+    ENGINE0_FIRST_DRAW,
+    ENGINE0_SECOND_DRAW,
+    ENGINE0_FIRST_LOSE,
+    ENGINE0_SECOND_LOSE
+};
 
-void debug_output(const string &message)
+void debug_output(const string &file, const string &message, bool print = true)
 {
     char time_string[256];
     time_t t = time(NULL);
     struct tm *tmp = localtime(&t);
     strftime(time_string, 256, "%a, %d %b %Y %T %z", tmp);
-    cout << "[" << time_string << "] " << message << endl;
+
+    ofstream fout;
+    fout.open(file.c_str(), fstream::out | fstream::app);
+    fout << "[" << time_string << "] " << message << endl;
+    fout.close();
+
+    if (print)
+        cout << "[" << time_string << "] " << message << endl;
 }
 
 struct Game;
@@ -48,18 +65,26 @@ struct Engine
 struct Game
 {
     bool first_engine_first;
+    string log_file;
 
     Engine *engines[2];
     Board board;
     int turn;
 };
 
+int results[6] = {0};
+
+vector<Engine *> engines;
+vector<Game *> games;
+bool next_first_first = true;
+char *engine_path[2];
+
 bool run(const char *engine, Engine *info)
 {
     int piperead[2], pipewrite[2];
     if (pipe2(piperead, O_NONBLOCK) == -1)
     {
-        debug_output("Create pipe failed 1");
+        debug_output(MAIN_LOG, "Create pipe failed 1");
         return false;
     }
 
@@ -67,7 +92,7 @@ bool run(const char *engine, Engine *info)
     {
         close(piperead[0]);
         close(piperead[1]);
-        debug_output("Create pipe failed 2");
+        debug_output(MAIN_LOG, "Create pipe failed 2");
         return false;
     }
 
@@ -78,7 +103,7 @@ bool run(const char *engine, Engine *info)
         close(piperead[1]);
         close(pipewrite[0]);
         close(pipewrite[1]);
-        debug_output(string("Fork ") + engine + " failed");
+        debug_output(MAIN_LOG, string("Fork ") + engine + " failed");
         return false;
     }
 
@@ -108,15 +133,14 @@ bool run(const char *engine, Engine *info)
     return true;
 }
 
-std::vector<std::string> &split(const std::string &s, char delim, std::vector<std::string> &elems)
+vector<std::string> &split(const std::string &s, char delim, std::vector<std::string> &elems)
 {
-    std::stringstream ss(s);
-    std::string item;
-    while (std::getline(ss, item, delim))
+    stringstream ss(s);
+    string item;
+    while (getline(ss, item, delim))
         elems.push_back(item);
     return elems;
 }
-
 
 std::vector<std::string> split(const std::string &s, char delim)
 {
@@ -125,17 +149,87 @@ std::vector<std::string> split(const std::string &s, char delim)
     return elems;
 }
 
-void end_game(Game *game, int result)
+void output_stats()
 {
+    ostringstream oss;
+    int tot = 0;
+    for (int i = 0; i < 6; ++i)
+    {
+        oss << results[i] << " ";
+        tot += results[i];
+    }
+
+    debug_output(MAIN_LOG, "Overall result: " + oss.str());
+    ostringstream oss2;
+
+    double wr0 = (double) (results[ENGINE0_FIRST_WIN] + results[ENGINE0_SECOND_WIN]) / (double) tot;
+    double wr1 = (double) (results[ENGINE0_FIRST_LOSE] + results[ENGINE0_SECOND_LOSE]) / (double) tot;
+    oss2 << "Engine0 win rate: " << wr0 * 100 << "%, engine1 win rate: " << wr1 * 100 << "%";
+    debug_output(MAIN_LOG, oss2.str());
+}
+
+void end_game(Game *game, Result result)
+{
+    ++results[result];
+    debug_output(MAIN_LOG, "Game ended with result " + result);
+    output_stats();
+
     write(game->engines[0]->write_fd, QUIT, strlen(QUIT));
     write(game->engines[1]->write_fd, QUIT, strlen(QUIT));
     waitpid(game->engines[0]->pid, NULL, 0);
     waitpid(game->engines[1]->pid, NULL, 0);
+    engines.erase(find(engines.begin(), engines.end(), game->engines[0]));
+    engines.erase(find(engines.begin(), engines.end(), game->engines[1]));
+    games.erase(find(games.begin(), games.end(), game));
+    delete game->engines[0];
+    delete game->engines[1];
+    delete game;
+}
+
+string generate_random(int len)
+{
+    string s;
+    for (int i = 0; i < len; ++i)
+        s += ('a' + rand() % 26);
+    return s + ".log";
+}
+
+void start_new_game()
+{
+    Game *game = new Game();
+    game->first_engine_first = next_first_first;
+    next_first_first = !next_first_first;
+    game->turn = (game->first_engine_first ? 0 : 1);
+    game->log_file = generate_random(10);
+
+    for (int j = 0; j < 2; ++j)
+    {
+        Engine *e = new Engine();
+        game->engines[j] = e;
+        e->id = j;
+        e->game = game;
+        if (!run(engine_path[j], e))
+        {
+            debug_output(MAIN_LOG, string("Failed to run ") + engine_path[e->id]);
+            exit(1);
+        }
+        engines.push_back(e);
+    }
+
+    games.push_back(game);
+
+    debug_output(MAIN_LOG, "New game started, log file: " + game->log_file);
+
+    ostringstream oss;
+    oss << "First engine: " << engine_path[0] << ", second engine: " << engine_path[1] << ", first_engine_first: " << game->first_engine_first;
+    debug_output(game->log_file, oss.str());
 }
 
 void handle_command(Engine *e, string command)
 {
-    debug_output(command);
+    ostringstream oss;
+    oss << "[" << e->id << "] ";
+    debug_output(e->game->log_file, oss.str() + command, false);
 
     vector<string> tokens = split(command, ' ');
     if (tokens.size() > 0 && tokens[0] == "feature")
@@ -154,17 +248,27 @@ void handle_command(Engine *e, string command)
         string move = tokens[1] + "\n";
         write(other->write_fd, move.c_str(), move.length());
 
-
         write(other->write_fd, GO, strlen(GO));
     }
     else if (tokens.size() > 0 && (tokens[0] == "1-0" || tokens[0] == "0-1") && command.find("resigns") != string::npos)
     {
-        int result;
+        Result result;
         if (e->id == 0)
-            result = ENGINE1_WIN;
+        {
+            if (e->game->first_engine_first)
+                result = ENGINE0_FIRST_LOSE;
+            else
+                result = ENGINE0_SECOND_LOSE;
+        }
         else
-            result = ENGINE0_WIN;
+        {
+            if (e->game->first_engine_first)
+                result = ENGINE0_FIRST_WIN;
+            else
+                result = ENGINE0_SECOND_WIN;
+        }
         end_game(e->game, result);
+        start_new_game();
     }
 }
 
@@ -233,41 +337,19 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char *engine[2] = {argv[1], argv[1]};
+    srand(time(0));
+
+    engine_path[0] = argv[1];
+    engine_path[1] = argv[2];
 
     int threads_count = atoi(argv[3]);
 
     cout << "===============================" << endl;
-    debug_output(string(engine[0]) + " vs " + engine[1] + " (#T=" + argv[3] + ")");
+    debug_output(MAIN_LOG, "============================");
+    debug_output(MAIN_LOG, string(engine_path[0]) + " vs " + engine_path[1] + " (#T=" + argv[3] + ")");
 
-    vector<Engine *> engines;
-    vector<Game *> games;
-
-    bool next_first_first = true;
     for (int i = 0; i < threads_count; ++i)
-    {
-        Game *game = new Game();
-        game->first_engine_first = next_first_first;
-        next_first_first = !next_first_first;
-        game->turn = (game->first_engine_first ? 0 : 1);
-
-        for (int j = 0; j < 2; ++j)
-        {
-            Engine *e = new Engine();
-            game->engines[j] = e;
-            e->id = j;
-            e->game = game;
-            if (!run(engine[j], e))
-            {
-                debug_output(string("Failed to run ") + engine[e->id]);
-                exit(1);
-            }
-            engines.push_back(e);
-
-        }
-
-        games.push_back(game);
-    }
+        start_new_game();
 
 
     fd_set fs_read;
