@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <string>
+#include <map>
 
 #include <errno.h>
 #include <unistd.h>
@@ -35,17 +36,21 @@ enum Result {
     ENGINE0_FIRST_LOSE,
     ENGINE0_SECOND_LOSE
 };
+const int WIN = 0, DRAW = 1, LOSE = 2;
 
-void debug_output(const string &file, const string &message, bool print = true)
+void debug_output(const string &file, const string &message, bool print = true, bool timestamp = true)
 {
+    ofstream fout;
+    fout.open(file.c_str(), fstream::out | fstream::app);
     char time_string[256];
     time_t t = time(NULL);
     struct tm *tmp = localtime(&t);
     strftime(time_string, 256, "%a, %d %b %Y %T %z", tmp);
 
-    ofstream fout;
-    fout.open(file.c_str(), fstream::out | fstream::app);
-    fout << "[" << time_string << "] " << message << endl;
+    if (!timestamp)
+        fout << message << endl;
+    else
+        fout << "[" << time_string << "] " << message << endl;
     fout.close();
 
     if (print)
@@ -65,7 +70,8 @@ struct Engine
 struct Game
 {
     bool first_engine_first;
-    string log_file;
+    string log_file, history_file;
+    map<uint64_t, int> repetition;
 
     Engine *engines[2];
     Board board;
@@ -168,10 +174,31 @@ void output_stats()
     debug_output(MAIN_LOG, oss2.str());
 }
 
-void end_game(Game *game, Result result)
+void end_game(Game *game, int id, int r)
 {
-    ++results[result];
-    debug_output(MAIN_LOG, "Game ended with result " + result);
+    Result result;
+    if (id != 0)
+        r = 2 - r;
+    if (game->first_engine_first)
+    {
+        if (r == WIN)
+            result = ENGINE0_FIRST_WIN;
+        else if (r == DRAW)
+            result = ENGINE0_FIRST_DRAW;
+        else
+            result = ENGINE0_FIRST_LOSE;
+    }
+    else
+    {
+        if (r == WIN)
+            result = ENGINE0_SECOND_WIN;
+        else if (r == DRAW)
+            result = ENGINE0_SECOND_DRAW;
+        else
+            result = ENGINE0_SECOND_LOSE;
+    }
+    ++results[(int) result];
+    debug_output(MAIN_LOG, "Game ended with result " + (int) result);
     output_stats();
 
     write(game->engines[0]->write_fd, QUIT, strlen(QUIT));
@@ -201,6 +228,7 @@ void start_new_game()
     next_first_first = !next_first_first;
     game->turn = (game->first_engine_first ? 0 : 1);
     game->log_file = generate_random(10);
+    game->history_file = generate_random(10);
 
     for (int j = 0; j < 2; ++j)
     {
@@ -218,11 +246,12 @@ void start_new_game()
 
     games.push_back(game);
 
-    debug_output(MAIN_LOG, "New game started, log file: " + game->log_file);
+    debug_output(MAIN_LOG, "New game started, log file: " + game->log_file + ", history file: " + game->history_file);
 
     ostringstream oss;
     oss << "First engine: " << engine_path[0] << ", second engine: " << engine_path[1] << ", first_engine_first: " << game->first_engine_first;
-    debug_output(game->log_file, oss.str());
+    debug_output(game->log_file, oss.str(), false);
+    debug_output(game->log_file, "History file: " + game->history_file, false);
 }
 
 void handle_command(Engine *e, string command)
@@ -242,32 +271,43 @@ void handle_command(Engine *e, string command)
     }
     else if (tokens.size() >= 2 && tokens[0] == "move")
     {
-        Engine *other = e->game->engines[1 - e->id];
-        write(other->write_fd, FORCE, strlen(FORCE));
+        debug_output(e->game->history_file, tokens[1], false, false);
 
-        string move = tokens[1] + "\n";
-        write(other->write_fd, move.c_str(), move.length());
-
-        write(other->write_fd, GO, strlen(GO));
-    }
-    else if (tokens.size() > 0 && (tokens[0] == "1-0" || tokens[0] == "0-1") && command.find("resigns") != string::npos)
-    {
-        Result result;
-        if (e->id == 0)
+        if (!e->game->board.checked_move(e->game->first_engine_first ? 1 - e->game->turn : e->game->turn, make_move(tokens[1]), NULL))
         {
-            if (e->game->first_engine_first)
-                result = ENGINE0_FIRST_LOSE;
-            else
-                result = ENGINE0_SECOND_LOSE;
+            debug_output(e->game->log_file, "Illegal move made");
+            end_game(e->game, e->id, LOSE);
+            start_new_game();
         }
         else
         {
-            if (e->game->first_engine_first)
-                result = ENGINE0_FIRST_WIN;
+            e->game->turn = 1 - e->game->turn;
+            uint64_t hash = e->game->board.hash_code(e->game->turn);
+            int rep = 0;
+            if (e->game->repetition.find(hash) != e->game->repetition.end())
+                rep = e->game->repetition[hash];
+            e->game->repetition[hash] = rep + 1;
+
+            if (rep >= 3)
+            {
+                end_game(e->game, e->id, DRAW);
+                start_new_game();
+            }
             else
-                result = ENGINE0_SECOND_WIN;
+            {
+                Engine *other = e->game->engines[1 - e->id];
+                write(other->write_fd, FORCE, strlen(FORCE));
+
+                string move = tokens[1] + "\n";
+                write(other->write_fd, move.c_str(), move.length());
+
+                write(other->write_fd, GO, strlen(GO));
+            }
         }
-        end_game(e->game, result);
+    }
+    else if (tokens.size() > 0 && (tokens[0] == "1-0" || tokens[0] == "0-1") && command.find("resigns") != string::npos)
+    {
+        end_game(e->game, e->id, LOSE);
         start_new_game();
     }
 }
