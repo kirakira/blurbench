@@ -198,7 +198,7 @@ void end_game(Game *game, int id, int r)
             result = ENGINE0_SECOND_LOSE;
     }
     ++results[(int) result];
-    debug_output(MAIN_LOG, "Game ended with result " + (int) result);
+    debug_output(MAIN_LOG, string("Game ended with result ") + (char) ('0' + result));
     output_stats();
 
     write(game->engines[0]->write_fd, QUIT, strlen(QUIT));
