@@ -76,6 +76,7 @@ struct Game
     Engine *engines[2];
     Board board;
     int turn;
+    int rule50;
 };
 
 int results[6] = {0};
@@ -165,6 +166,8 @@ void output_stats()
         tot += results[i];
     }
 
+    oss << ", total: " << tot;
+
     debug_output(MAIN_LOG, "Overall result: " + oss.str());
     ostringstream oss2;
 
@@ -199,6 +202,7 @@ void end_game(Game *game, int id, int r)
     }
     ++results[(int) result];
     debug_output(MAIN_LOG, string("Game ended with result ") + (char) ('0' + result));
+    debug_output(game->log_file, string("Game ended with result ") + (char) ('0' + result), false);
     output_stats();
 
     write(game->engines[0]->write_fd, QUIT, strlen(QUIT));
@@ -227,6 +231,7 @@ void start_new_game()
     game->first_engine_first = next_first_first;
     next_first_first = !next_first_first;
     game->turn = (game->first_engine_first ? 0 : 1);
+    game->rule50 = 0;
     game->log_file = generate_random(10);
     game->history_file = generate_random(10);
 
@@ -273,7 +278,8 @@ void handle_command(Engine *e, string command)
     {
         debug_output(e->game->history_file, tokens[1], false, false);
 
-        if (!e->game->board.checked_move(e->game->first_engine_first ? 1 - e->game->turn : e->game->turn, make_move(tokens[1]), NULL))
+        MoveType mt;
+        if (!e->game->board.checked_move(e->game->first_engine_first ? 1 - e->game->turn : e->game->turn, make_move(tokens[1]), &mt))
         {
             debug_output(e->game->log_file, "Illegal move made");
             end_game(e->game, e->id, LOSE);
@@ -288,7 +294,12 @@ void handle_command(Engine *e, string command)
                 rep = e->game->repetition[hash];
             e->game->repetition[hash] = rep + 1;
 
-            if (rep >= 3)
+            if (mt == CAPTURE || mt == KING_CAPTURE)
+                e->game->rule50 = 0;
+            else
+                ++e->game->rule50;
+
+            if (rep >= 3 || e->game->rule50 >= 50)
             {
                 end_game(e->game, e->id, DRAW);
                 start_new_game();
