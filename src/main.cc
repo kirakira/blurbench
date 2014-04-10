@@ -91,15 +91,17 @@ bool run(const char *engine, Engine *info)
     int piperead[2], pipewrite[2];
     if (pipe2(piperead, O_NONBLOCK) == -1)
     {
-        debug_output(MAIN_LOG, "Create pipe failed 1");
+        char message[255];
+        sprintf(message, "Create pipe failed 1: %d", errno);
+        debug_output(MAIN_LOG, message);
         return false;
     }
 
     if (pipe(pipewrite) == -1)
     {
-        close(piperead[0]);
-        close(piperead[1]);
-        debug_output(MAIN_LOG, "Create pipe failed 2");
+        char message[255];
+        sprintf(message, "Create pipe failed 2: %d", errno);
+        debug_output(MAIN_LOG, message);
         return false;
     }
 
@@ -110,7 +112,10 @@ bool run(const char *engine, Engine *info)
         close(piperead[1]);
         close(pipewrite[0]);
         close(pipewrite[1]);
-        debug_output(MAIN_LOG, string("Fork ") + engine + " failed");
+
+        char message[255];
+        sprintf(message, "Fork %s failed: %d", engine, errno);
+        debug_output(MAIN_LOG, message);
         return false;
     }
 
