@@ -214,6 +214,10 @@ void end_game(Game *game, int id, int r)
     write(game->engines[1]->write_fd, QUIT, strlen(QUIT));
     waitpid(game->engines[0]->pid, NULL, 0);
     waitpid(game->engines[1]->pid, NULL, 0);
+    close(game->engines[0]->write_fd);
+    close(game->engines[0]->read_fd);
+    close(game->engines[1]->write_fd);
+    close(game->engines[1]->read_fd);
     engines.erase(find(engines.begin(), engines.end(), game->engines[0]));
     engines.erase(find(engines.begin(), engines.end(), game->engines[1]));
     games.erase(find(games.begin(), games.end(), game));
